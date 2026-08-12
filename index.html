@@ -90,7 +90,13 @@
     <div id="status">Conectando ao servidor...</div>
   </div>
 
-  <video id="tela" autoplay playsinline></video>
+  <div class="card" style="margin-top:16px;">
+    <label style="font-size:13px;color:#aaa;">
+      <input type="checkbox" id="chkControle"> Enviar meu mouse para controlar o transmissor
+    </label>
+  </div>
+
+  <video id="tela" autoplay playsinline style="cursor:crosshair;"></video>
   <button id="btnPlay">▶ Clique para exibir o vídeo</button>
 
   <script>
@@ -153,21 +159,69 @@
       btnPlay.style.display = 'none';
     });
 
+    const chkControle = document.getElementById('chkControle');
+    let conexaoAtiva = null;
+    let ultimoEnvio = 0;
+
+    function coordenadaRelativa(evento) {
+      const rect = video.getBoundingClientRect();
+      const x = (evento.clientX - rect.left) / rect.width;
+      const y = (evento.clientY - rect.top) / rect.height;
+      return {
+        x: Math.min(Math.max(x, 0), 1),
+        y: Math.min(Math.max(y, 0), 1)
+      };
+    }
+
+    video.addEventListener('mousemove', (e) => {
+      if (!chkControle.checked || !conexaoAtiva) return;
+      const agora = Date.now();
+      if (agora - ultimoEnvio < 33) return; // limita a ~30 envios/segundo
+      ultimoEnvio = agora;
+      const { x, y } = coordenadaRelativa(e);
+      conexaoAtiva.send({ type: 'mousemove', x, y });
+    });
+
+    video.addEventListener('mousedown', (e) => {
+      if (!chkControle.checked || !conexaoAtiva) return;
+      e.preventDefault();
+      const botao = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+      conexaoAtiva.send({ type: 'mousedown', button: botao });
+    });
+
+    video.addEventListener('mouseup', (e) => {
+      if (!chkControle.checked || !conexaoAtiva) return;
+      const botao = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+      conexaoAtiva.send({ type: 'mouseup', button: botao });
+    });
+
+    video.addEventListener('wheel', (e) => {
+      if (!chkControle.checked || !conexaoAtiva) return;
+      e.preventDefault();
+      conexaoAtiva.send({ type: 'scroll', amount: e.deltaY > 0 ? -50 : 50 });
+    }, { passive: false });
+
+    video.addEventListener('contextmenu', (e) => {
+      if (chkControle.checked) e.preventDefault(); // evita o menu do navegador ao clicar com botão direito
+    });
+
     btn.addEventListener('click', () => {
       const idAlvo = input.value.trim();
       if (!idAlvo) return;
 
       log(`Solicitando conexão com ${idAlvo}...`);
 
-      // Abre uma conexão de dados só pra avisar o transmissor que queremos assistir
+      // Abre uma conexão de dados: serve tanto para avisar o transmissor
+      // quanto, depois, para mandar os comandos de mouse
       const dataConn = peer.connect(idAlvo);
+      conexaoAtiva = dataConn;
 
       dataConn.on('open', () => {
         log('Pedido enviado. Aguardando o transmissor iniciar o vídeo...');
       });
 
       dataConn.on('data', (msg) => {
-        log(`Mensagem do transmissor: ${msg}`);
+        log(`Mensagem do transmissor: ${JSON.stringify(msg)}`);
       });
 
       dataConn.on('error', (err) => {

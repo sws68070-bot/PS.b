@@ -1,111 +1,154 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rastreamento de Mão em Tempo Real</title>
-
-  <!-- Bibliotecas do MediaPipe para Hands e Camera -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background-color: #121212;
-      color: #ffffff;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      margin: 0;
-    }
-
-    h1 {
-      margin-bottom: 20px;
-    }
-
-    .container {
-      position: relative;
-      width: 640px;
-      height: 480px;
-    }
-
-    /* Inverte o vídeo e a tela para funcionar como um espelho */
-    #webcam, #output_canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      border-radius: 12px;
-      transform: scaleX(-1);
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transmissor de Tela</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Arial, sans-serif;
+    background: #0f0f0f;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 30px 16px;
+  }
+  h1 { margin-bottom: 6px; }
+  .sub { color: #888; margin-bottom: 24px; font-size: 14px; }
+  .card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 480px;
+    text-align: center;
+  }
+  #meuId {
+    font-size: 28px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: #4ade80;
+    margin: 12px 0;
+    word-break: break-all;
+  }
+  button {
+    background: #4ade80;
+    color: #0f0f0f;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 15px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  button:disabled { background: #333; color: #888; cursor: not-allowed; }
+  button:hover:not(:disabled) { opacity: 0.9; }
+  #status {
+    margin-top: 16px;
+    font-size: 14px;
+    color: #aaa;
+  }
+  video {
+    width: 100%;
+    max-width: 480px;
+    margin-top: 20px;
+    border-radius: 12px;
+    border: 1px solid #2a2a2a;
+    background: #000;
+  }
+  .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .off { background: #555; }
+  .on { background: #ef4444; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+</style>
 </head>
 <body>
 
-  <h1>Rastreamento de Mão ✋</h1>
+  <h1>📡 Transmissor de Tela</h1>
+  <p class="sub">Compartilhe seu código com quem vai assistir</p>
 
-  <div class="container">
-    <!-- Elemento para capturar a webcam (escondido atrás do canvas) -->
-    <video id="webcam" autoplay playsinline></video>
-    <!-- Canvas onde os pontos da mão serão desenhados -->
-    <canvas id="output_canvas" width="640" height="480"></canvas>
+  <div class="card">
+    <div>Seu código de transmissão:</div>
+    <div id="meuId">gerando...</div>
+    <button id="btnCompartilhar">Iniciar compartilhamento de tela</button>
+    <div id="status"><span class="dot off"></span>Aguardando início</div>
   </div>
 
+  <video id="preview" autoplay muted playsinline></video>
+
   <script>
-    const videoElement = document.getElementById('webcam');
-    const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
+    const peer = new Peer(); // usa o servidor gratuito público do PeerJS
+    const meuIdEl = document.getElementById('meuId');
+    const statusEl = document.getElementById('status');
+    const btn = document.getElementById('btnCompartilhar');
+    const preview = document.getElementById('preview');
 
-    // Função executada a cada frame capturado com o resultado do rastreamento
-    function onResults(results) {
-      // Limpa o canvas
-      canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      
-      // Desenha a imagem da câmera no canvas
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+    let localStream = null;
 
-      // Se encontrar alguma mão...
-      if (results.multiHandLandmarks) {
-        for (const landmarks of results.multiHandLandmarks) {
-          // Desenha as linhas conectando os pontos
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
-          // Desenha os pontos articulares da mão
-          drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2, radius: 5});
-        }
+    peer.on('open', (id) => {
+      meuIdEl.textContent = id;
+    });
+
+    peer.on('error', (err) => {
+      statusEl.innerHTML = `<span class="dot off"></span>Erro: ${err.type}`;
+      console.error(err);
+    });
+
+    // Quando alguém (o site receptor) ligar pedindo a chamada, respondemos com o stream
+    peer.on('call', (call) => {
+      if (!localStream) {
+        alert('Inicie o compartilhamento de tela antes de aceitar conexões.');
+        return;
       }
-      canvasCtx.restore();
-    }
+      call.answer(localStream);
+      statusEl.innerHTML = `<span class="dot on"></span>Transmitindo para um espectador`;
 
-    // Configuração do modelo MediaPipe Hands
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      call.on('close', () => {
+        statusEl.innerHTML = `<span class="dot off"></span>Espectador desconectou`;
+      });
     });
 
-    hands.setOptions({
-      maxNumHands: 2,           // Detecta até 2 mãos
-      modelComplexity: 1,       // Precisão do modelo (0 para mais leve, 1 para balanceado)
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+    btn.addEventListener('click', async () => {
+      try {
+        localStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 30, max: 60 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false // troque para true se quiser tentar capturar áudio do sistema também
+        });
+
+        preview.srcObject = localStream;
+        btn.disabled = true;
+        btn.textContent = 'Compartilhamento ativo';
+        statusEl.innerHTML = `<span class="dot on"></span>Pronto! Aguardando espectador conectar`;
+
+        // Se o usuário parar o compartilhamento pelo próprio navegador
+        localStream.getVideoTracks()[0].addEventListener('ended', () => {
+          btn.disabled = false;
+          btn.textContent = 'Iniciar compartilhamento de tela';
+          statusEl.innerHTML = `<span class="dot off"></span>Compartilhamento encerrado`;
+        });
+
+      } catch (err) {
+        console.error(err);
+        statusEl.innerHTML = `<span class="dot off"></span>Permissão negada ou cancelada`;
+      }
     });
-
-    hands.onResults(onResults);
-
-    // Inicialização da Câmera
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({image: videoElement});
-      },
-      width: 640,
-      height: 480
-    });
-
-    camera.start();
   </script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Transmissor de Tela</title>
+<title>Receptor de Tela</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <style>
   * { box-sizing: border-box; }
@@ -29,13 +29,16 @@
     max-width: 480px;
     text-align: center;
   }
-  #meuId {
-    font-size: 28px;
-    font-weight: bold;
-    letter-spacing: 2px;
-    color: #4ade80;
+  input {
+    width: 100%;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #333;
+    background: #0f0f0f;
+    color: #fff;
+    font-size: 16px;
+    text-align: center;
     margin: 12px 0;
-    word-break: break-all;
   }
   button {
     background: #4ade80;
@@ -46,108 +49,130 @@
     font-weight: bold;
     font-size: 15px;
     cursor: pointer;
-    margin-top: 8px;
+    width: 100%;
   }
   button:disabled { background: #333; color: #888; cursor: not-allowed; }
   button:hover:not(:disabled) { opacity: 0.9; }
   #status {
     margin-top: 16px;
-    font-size: 14px;
+    font-size: 12px;
     color: #aaa;
+    text-align: left;
+    background: #000;
+    padding: 10px;
+    border-radius: 8px;
+    max-height: 160px;
+    overflow-y: auto;
+    font-family: monospace;
   }
   video {
     width: 100%;
-    max-width: 480px;
+    max-width: 960px;
     margin-top: 20px;
     border-radius: 12px;
     border: 1px solid #2a2a2a;
     background: #000;
   }
-  .dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-right: 6px;
+  #btnPlay {
+    display: none;
+    margin-top: 12px;
   }
-  .off { background: #555; }
-  .on { background: #ef4444; animation: pulse 1.5s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 </style>
 </head>
 <body>
 
-  <h1>📡 Transmissor de Tela</h1>
-  <p class="sub">Compartilhe seu código com quem vai assistir</p>
+  <h1>👁 Receptor de Tela</h1>
+  <p class="sub">Digite o código do transmissor pra assistir</p>
 
   <div class="card">
-    <div>Seu código de transmissão:</div>
-    <div id="meuId">gerando...</div>
-    <button id="btnCompartilhar">Iniciar compartilhamento de tela</button>
-    <div id="status"><span class="dot off"></span>Aguardando início</div>
+    <input id="idTransmissor" placeholder="Cole o código do transmissor aqui">
+    <button id="btnConectar">Conectar</button>
+    <div id="status">Conectando ao servidor...</div>
   </div>
 
-  <video id="preview" autoplay muted playsinline></video>
+  <video id="tela" autoplay playsinline></video>
+  <button id="btnPlay">▶ Clique para exibir o vídeo</button>
 
   <script>
-    const peer = new Peer(); // usa o servidor gratuito público do PeerJS
-    const meuIdEl = document.getElementById('meuId');
-    const statusEl = document.getElementById('status');
-    const btn = document.getElementById('btnCompartilhar');
-    const preview = document.getElementById('preview');
+    const log = (msg) => {
+      const el = document.getElementById('status');
+      const linha = document.createElement('div');
+      linha.textContent = `${new Date().toLocaleTimeString()} — ${msg}`;
+      el.prepend(linha);
+    };
 
-    let localStream = null;
+    const peer = new Peer(); // servidor gratuito público do PeerJS
+    const btn = document.getElementById('btnConectar');
+    const input = document.getElementById('idTransmissor');
+    const video = document.getElementById('tela');
+    const btnPlay = document.getElementById('btnPlay');
 
-    peer.on('open', (id) => {
-      meuIdEl.textContent = id;
+    peer.on('open', () => {
+      log('Conectado ao servidor. Pronto para conectar em um transmissor.');
+      btn.disabled = false;
+    });
+
+    peer.on('disconnected', () => {
+      log('Desconectado do servidor. Tentando reconectar...');
+      peer.reconnect();
     });
 
     peer.on('error', (err) => {
-      statusEl.innerHTML = `<span class="dot off"></span>Erro: ${err.type}`;
+      log(`Erro: ${err.type} — ${err.message || ''}`);
       console.error(err);
     });
 
-    // Quando alguém (o site receptor) ligar pedindo a chamada, respondemos com o stream
+    // Recebe a chamada que o transmissor faz de volta, já com o vídeo
     peer.on('call', (call) => {
-      if (!localStream) {
-        alert('Inicie o compartilhamento de tela antes de aceitar conexões.');
-        return;
-      }
-      call.answer(localStream);
-      statusEl.innerHTML = `<span class="dot on"></span>Transmitindo para um espectador`;
+      log('Transmissor está enviando o vídeo, respondendo chamada...');
+      call.answer(); // respondemos sem enviar stream nenhum, só recebendo
+
+      call.on('stream', (streamRemoto) => {
+        log('Stream recebido! Exibindo vídeo.');
+        video.srcObject = streamRemoto;
+
+        video.play().catch(() => {
+          // Autoplay bloqueado pelo navegador — mostra botão manual
+          log('Autoplay bloqueado pelo navegador. Clique no botão para iniciar.');
+          btnPlay.style.display = 'block';
+        });
+      });
 
       call.on('close', () => {
-        statusEl.innerHTML = `<span class="dot off"></span>Espectador desconectou`;
+        log('Transmissão encerrada.');
+        video.srcObject = null;
+      });
+
+      call.on('error', (err) => {
+        log(`Erro na chamada: ${err}`);
       });
     });
 
-    btn.addEventListener('click', async () => {
-      try {
-        localStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            frameRate: { ideal: 30, max: 60 },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          },
-          audio: false // troque para true se quiser tentar capturar áudio do sistema também
-        });
+    btnPlay.addEventListener('click', () => {
+      video.play();
+      btnPlay.style.display = 'none';
+    });
 
-        preview.srcObject = localStream;
-        btn.disabled = true;
-        btn.textContent = 'Compartilhamento ativo';
-        statusEl.innerHTML = `<span class="dot on"></span>Pronto! Aguardando espectador conectar`;
+    btn.addEventListener('click', () => {
+      const idAlvo = input.value.trim();
+      if (!idAlvo) return;
 
-        // Se o usuário parar o compartilhamento pelo próprio navegador
-        localStream.getVideoTracks()[0].addEventListener('ended', () => {
-          btn.disabled = false;
-          btn.textContent = 'Iniciar compartilhamento de tela';
-          statusEl.innerHTML = `<span class="dot off"></span>Compartilhamento encerrado`;
-        });
+      log(`Solicitando conexão com ${idAlvo}...`);
 
-      } catch (err) {
-        console.error(err);
-        statusEl.innerHTML = `<span class="dot off"></span>Permissão negada ou cancelada`;
-      }
+      // Abre uma conexão de dados só pra avisar o transmissor que queremos assistir
+      const dataConn = peer.connect(idAlvo);
+
+      dataConn.on('open', () => {
+        log('Pedido enviado. Aguardando o transmissor iniciar o vídeo...');
+      });
+
+      dataConn.on('data', (msg) => {
+        log(`Mensagem do transmissor: ${msg}`);
+      });
+
+      dataConn.on('error', (err) => {
+        log(`Falha ao conectar: ${err}`);
+      });
     });
   </script>
 </body>

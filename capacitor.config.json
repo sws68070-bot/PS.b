@@ -1,9 +1,0 @@
-{
-  "appId": "com.seudominio.rastreiomao",
-  "appName": "RastreioMao",
-  "webDir": "www",
-  "bundledWebRuntime": false,
-  "server": {
-    "androidScheme": "https"
-  }
-}

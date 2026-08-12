@@ -98,6 +98,7 @@
 
   <video id="tela" autoplay playsinline style="cursor:crosshair;"></video>
   <button id="btnPlay">▶ Clique para exibir o vídeo</button>
+  <button id="btnTelaCheia" style="margin-top:10px;max-width:960px;">⛶ Tela cheia</button>
 
   <script>
     const log = (msg) => {
@@ -157,6 +158,22 @@
     btnPlay.addEventListener('click', () => {
       video.play();
       btnPlay.style.display = 'none';
+    });
+
+    const btnTelaCheia = document.getElementById('btnTelaCheia');
+
+    btnTelaCheia.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        video.requestFullscreen().catch((err) => {
+          log(`Não foi possível entrar em tela cheia: ${err.message}`);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      btnTelaCheia.textContent = document.fullscreenElement ? '⛶ Sair da tela cheia' : '⛶ Tela cheia';
     });
 
     const chkControle = document.getElementById('chkControle');

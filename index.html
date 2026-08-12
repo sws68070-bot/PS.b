@@ -91,8 +91,15 @@
   </div>
 
   <div class="card" style="margin-top:16px;">
-    <label style="font-size:13px;color:#aaa;">
+    <label style="font-size:13px;color:#aaa;display:block;margin-bottom:8px;">
       <input type="checkbox" id="chkControle"> Enviar meu mouse para controlar o transmissor
+    </label>
+    <label style="font-size:13px;color:#aaa;display:block;margin-bottom:8px;">
+      <input type="checkbox" id="chkTeclado"> Enviar meu teclado (só funciona em tela cheia)
+    </label>
+    <label style="font-size:13px;color:#aaa;display:block;">
+      <input type="checkbox" id="chkGamepad"> Usar controle (ex: PS4) para mexer o mouse/teclado
+      — <span id="statusGamepad" style="color:#ef4444;">nenhum controle detectado</span>
     </label>
   </div>
 
@@ -177,6 +184,9 @@
     });
 
     const chkControle = document.getElementById('chkControle');
+    const chkTeclado = document.getElementById('chkTeclado');
+    const chkGamepad = document.getElementById('chkGamepad');
+    const statusGamepadEl = document.getElementById('statusGamepad');
     let conexaoAtiva = null;
     let ultimoEnvio = 0;
 
@@ -221,6 +231,179 @@
     video.addEventListener('contextmenu', (e) => {
       if (chkControle.checked) e.preventDefault(); // evita o menu do navegador ao clicar com botão direito
     });
+
+    // ─────────────────────────────────────────────
+    // TECLADO (funciona só em tela cheia, de propósito,
+    // pra não sequestrar o teclado enquanto você digita
+    // em outro lugar da página)
+    // ─────────────────────────────────────────────
+
+    // Mapa: código físico da tecla (KeyboardEvent.code) -> nome que o pyautogui entende.
+    // Se quiser ajustar alguma tecla, é só editar aqui.
+    const CODE_PARA_PYAUTOGUI = {
+      KeyA:'a',KeyB:'b',KeyC:'c',KeyD:'d',KeyE:'e',KeyF:'f',KeyG:'g',KeyH:'h',
+      KeyI:'i',KeyJ:'j',KeyK:'k',KeyL:'l',KeyM:'m',KeyN:'n',KeyO:'o',KeyP:'p',
+      KeyQ:'q',KeyR:'r',KeyS:'s',KeyT:'t',KeyU:'u',KeyV:'v',KeyW:'w',KeyX:'x',
+      KeyY:'y',KeyZ:'z',
+      Digit0:'0',Digit1:'1',Digit2:'2',Digit3:'3',Digit4:'4',
+      Digit5:'5',Digit6:'6',Digit7:'7',Digit8:'8',Digit9:'9',
+      Space:'space', Enter:'enter', NumpadEnter:'enter', Escape:'esc',
+      Backspace:'backspace', Tab:'tab', CapsLock:'capslock',
+      ShiftLeft:'shiftleft', ShiftRight:'shiftright',
+      ControlLeft:'ctrlleft', ControlRight:'ctrlright',
+      AltLeft:'altleft', AltRight:'altright',
+      ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right',
+      Delete:'delete', Home:'home', End:'end', PageUp:'pageup', PageDown:'pagedown',
+      Insert:'insert',
+      Minus:'-', Equal:'=', BracketLeft:'[', BracketRight:']', Backslash:'\\',
+      Semicolon:';', Quote:"'", Comma:',', Period:'.', Slash:'/', Backquote:'`',
+      F1:'f1',F2:'f2',F3:'f3',F4:'f4',F5:'f5',F6:'f6',F7:'f7',F8:'f8',
+      F9:'f9',F10:'f10',F11:'f11',F12:'f12',
+    };
+
+    function mapearTecla(code) {
+      return CODE_PARA_PYAUTOGUI[code] || null;
+    }
+
+    const teclasPressionadas = new Set();
+
+    window.addEventListener('keydown', (e) => {
+      if (!chkTeclado.checked || !document.fullscreenElement || !conexaoAtiva) return;
+      const pykey = mapearTecla(e.code);
+      if (!pykey) return;
+      e.preventDefault();
+      if (teclasPressionadas.has(e.code)) return; // ignora auto-repeat do navegador
+      teclasPressionadas.add(e.code);
+      conexaoAtiva.send({ type: 'keydown', key: pykey });
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (!conexaoAtiva) return;
+      const pykey = mapearTecla(e.code);
+      if (!pykey) return;
+      teclasPressionadas.delete(e.code);
+      conexaoAtiva.send({ type: 'keyup', key: pykey });
+    });
+
+    // Se sair da tela cheia (inclusive com Esc, que o navegador não deixa
+    // bloquear), solta qualquer tecla que ficou "presa" do lado remoto.
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement && conexaoAtiva) {
+        teclasPressionadas.forEach((code) => {
+          const pykey = mapearTecla(code);
+          if (pykey) conexaoAtiva.send({ type: 'keyup', key: pykey });
+        });
+        teclasPressionadas.clear();
+      }
+    });
+
+    // ─────────────────────────────────────────────
+    // CONTROLE DE PS4 / GAMEPAD
+    // Analógico esquerdo move o mouse, analógico direito
+    // (eixo Y) rola a tela, e os botões abaixo mandam
+    // clique ou tecla. Edite BOTOES_PS4 pra remapear.
+    // Índices seguem o "Standard Gamepad" do navegador,
+    // que é como o Chrome/Firefox enxergam um DualShock 4.
+    // ─────────────────────────────────────────────
+    let gamepadIndex = null;
+
+    window.addEventListener('gamepadconnected', (e) => {
+      gamepadIndex = e.gamepad.index;
+      statusGamepadEl.textContent = `conectado: ${e.gamepad.id}`;
+      statusGamepadEl.style.color = '#4ade80';
+      log(`Controle conectado: ${e.gamepad.id}`);
+    });
+
+    window.addEventListener('gamepaddisconnected', () => {
+      gamepadIndex = null;
+      statusGamepadEl.textContent = 'nenhum controle detectado';
+      statusGamepadEl.style.color = '#ef4444';
+      log('Controle desconectado.');
+    });
+
+    const BOTOES_PS4 = [
+      { tipo: 'mouse', botao: 'left' },    // 0  X (Cross)
+      { tipo: 'mouse', botao: 'right' },   // 1  Círculo
+      { tipo: 'key', tecla: 'space' },     // 2  Quadrado
+      { tipo: 'key', tecla: 'esc' },       // 3  Triângulo
+      { tipo: 'key', tecla: 'ctrlleft' },  // 4  L1
+      { tipo: 'key', tecla: 'shiftleft' }, // 5  R1
+      null,                                // 6  L2 (analógico, tratado à parte)
+      null,                                // 7  R2 (analógico, tratado à parte)
+      { tipo: 'key', tecla: 'tab' },       // 8  Share
+      { tipo: 'key', tecla: 'enter' },     // 9  Options
+      null,                                // 10 L3 (clique do analógico)
+      null,                                // 11 R3 (clique do analógico)
+      { tipo: 'key', tecla: 'up' },        // 12 D-pad cima
+      { tipo: 'key', tecla: 'down' },      // 13 D-pad baixo
+      { tipo: 'key', tecla: 'left' },      // 14 D-pad esquerda
+      { tipo: 'key', tecla: 'right' },     // 15 D-pad direita
+      null,                                // 16 Botão PS
+    ];
+
+    const estadoBotoesGamepad = {};
+
+    function aplicarDeadzone(valor, zona) {
+      return Math.abs(valor) < zona ? 0 : valor;
+    }
+
+    function dispararAcaoGamepad(acao, pressionado) {
+      if (!conexaoAtiva || !acao) return;
+      if (acao.tipo === 'mouse') {
+        conexaoAtiva.send({ type: pressionado ? 'mousedown' : 'mouseup', button: acao.botao });
+      } else if (acao.tipo === 'key') {
+        conexaoAtiva.send({ type: pressionado ? 'keydown' : 'keyup', key: acao.tecla });
+      }
+    }
+
+    let ultimoEnvioGamepad = 0;
+    let ultimoEnvioGatilhos = 0;
+
+    function loopGamepad() {
+      requestAnimationFrame(loopGamepad);
+      if (!chkGamepad.checked || !conexaoAtiva || gamepadIndex === null) return;
+
+      const gp = navigator.getGamepads()[gamepadIndex];
+      if (!gp) return;
+
+      const DEADZONE = 0.15;
+      const eixoX = aplicarDeadzone(gp.axes[0] || 0, DEADZONE);
+      const eixoY = aplicarDeadzone(gp.axes[1] || 0, DEADZONE);
+      const eixoScroll = aplicarDeadzone(gp.axes[3] || 0, DEADZONE);
+
+      const agora = Date.now();
+
+      if ((eixoX !== 0 || eixoY !== 0) && agora - ultimoEnvioGamepad >= 16) {
+        ultimoEnvioGamepad = agora;
+        const VELOCIDADE = 18; // pixels por envio, no máximo — ajuste se estiver rápido/lento demais
+        conexaoAtiva.send({ type: 'mousemove_rel', dx: eixoX * VELOCIDADE, dy: eixoY * VELOCIDADE });
+      }
+
+      if (eixoScroll !== 0 && agora - ultimoEnvioGamepad >= 16) {
+        conexaoAtiva.send({ type: 'scroll', amount: eixoScroll > 0 ? -20 : 20 });
+      }
+
+      // L2/R2 são analógicos (0 a 1) e viram scroll contínuo enquanto segurados
+      const l2 = gp.buttons[6] ? gp.buttons[6].value : 0;
+      const r2 = gp.buttons[7] ? gp.buttons[7].value : 0;
+      if ((l2 > 0.1 || r2 > 0.1) && agora - ultimoEnvioGatilhos >= 40) {
+        ultimoEnvioGatilhos = agora;
+        if (l2 > 0.1) conexaoAtiva.send({ type: 'scroll', amount: 20 });
+        if (r2 > 0.1) conexaoAtiva.send({ type: 'scroll', amount: -20 });
+      }
+
+      BOTOES_PS4.forEach((acao, indice) => {
+        const botao = gp.buttons[indice];
+        if (!botao) return;
+        const pressionadoAgora = botao.pressed;
+        const estavaPressionado = estadoBotoesGamepad[indice] || false;
+        if (pressionadoAgora !== estavaPressionado) {
+          dispararAcaoGamepad(acao, pressionadoAgora);
+          estadoBotoesGamepad[indice] = pressionadoAgora;
+        }
+      });
+    }
+    requestAnimationFrame(loopGamepad);
 
     btn.addEventListener('click', () => {
       const idAlvo = input.value.trim();
